@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AI Learning Assistant</title>
+<style>
+  :root{ --bg:#0b0f1f; --ink:#eaf0ff; --muted:#a9b2c5; --accent:#7aa2ff; }
+  *{box-sizing:border-box}
+  body{ margin:0; min-height:100dvh; display:grid; place-items:center;
+        background:radial-gradient(1200px 700px at 70% -10%, #1a224c 0%, #0f1328 40%, #0b0f1f 100%);
+        color:var(--ink); font-family:ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; padding:20px; }
+  .card{ width:min(720px,100%); background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.02));
+         border:1px solid rgba(255,255,255,.1); border-radius:18px; padding:18px; backdrop-filter: blur(6px);
+         box-shadow: 0 18px 50px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.05); }
+  h1{margin:0 0 8px; font-size:clamp(18px,3.2vw,26px)}
+  .row{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin:10px 0; }
+  .pill{padding:6px 10px; border-radius:999px; background:rgba(122,162,255,.14); border:1px solid rgba(122,162,255,.3); color:#dbe6ff; font-size:12px}
+  .mic{ display:inline-flex; align-items:center; gap:8px; border:none; cursor:pointer;
+        background:linear-gradient(180deg,#7aa2ff,#5b86ff); color:#071126; font-weight:800;
+        padding:12px 16px; border-radius:12px; font-size:16px; min-width:160px; }
+  .mic:active{ transform: translateY(1px) }
+  .hintBtns{ display:flex; gap:8px; flex-wrap:wrap }
+  .btn{ border:none; border-radius:12px; padding:10px 14px; font-weight:800; cursor:pointer; }
+  .btn.more{ background:#c4f28a; color:#182b00; }
+  .btn.reveal{ background:#ffd66e; color:#221b00; }
+  .btn.repeat{ background:#b6c6ff; color:#0e1230; }
+  .muted{ color:var(--muted); font-size:12px }
+
+  /* Face */
+  .face-card{ position:relative; display:grid; place-items:center; min-height:360px; margin-top:8px; }
+  .ring{ position:absolute; width:clamp(240px,60vw,360px); aspect-ratio:1/1; border-radius:50%;
+         background: radial-gradient(closest-side, rgba(122,162,255,.14), rgba(122,162,255,.02) 66%, transparent 70%);
+         opacity:.0; transform:scale(.96); transition:.3s ease; pointer-events:none; }
+  .speaking .ring{ opacity:1; animation:ringPulse 1.3s ease-in-out infinite }
+  @keyframes ringPulse{ 0%{transform:scale(.96)} 50%{transform:scale(1.02)} 100%{transform:scale(.96)} }
+  .face-wrap{ width:min(420px,100%); aspect-ratio:1/1; display:grid; place-items:center; filter: drop-shadow(0 24px 40px rgba(0,0,0,.45)); }
+  .speaking .face-wrap{ animation:bob .9s ease-in-out infinite }
+  @keyframes bob{ 0%,100%{transform:translateY(0)} 50%{transform:translateY(3px)} }
+  svg{ width:100%; height:100% }
+  .status{ text-align:center; color:var(--muted); font-size:12px; margin-top:8px }
+  @media (prefers-reduced-motion: reduce){ .speaking .ring, .speaking .face-wrap{ animation:none !important } }
+</style>
+</head>
+<body>
+  <section class="card">
+    <h1>AI Learning Assistant</h1>
+    <div class="row">
+      <span class="pill" id="supportPill">Checking voice capabilities…</span>
+    </div>
+    <div class="row">
+      <button class="mic" id="micBtn" disabled>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M12 14a3 3 0 003-3V7a3 3 0 10-6 0v4a3 3 0 003 3z" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <path d="M19 11a7 7 0 11-14 0M12 18v3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <span id="micLabel">Ask a question</span>
+      </button>
+      <div class="hintBtns">
+        <button class="btn more" id="moreBtn" title="Next hint">More hint</button>
+        <button class="btn repeat" id="repeatBtn" title="Repeat last">Repeat</button>
+        <button class="btn reveal" id="revealBtn" title="Reveal answer">Reveal answer</button>
+      </div>
+    </div>
+    <div class="muted">Tip: you can also speak commands like “more hint”, “didn’t understand”, “repeat”, or “reveal answer”.</div>
+
+    <!-- Face -->
+    <div class="face-card" id="faceCard" aria-live="polite">
+      <div class="ring"></div>
+      <div class="face-wrap">
+        <svg id="face" viewBox="0 0 300 300" role="img" aria-label="Animated talking face">
+          <!-- Eyes -->
+          <circle cx="110" cy="120" r="25" fill="#fff" stroke="#333" stroke-width="3"/>
+          <circle cx="190" cy="120" r="25" fill="#fff" stroke="#333" stroke-width="3"/>
+          <circle id="pL" cx="110" cy="120" r="10" fill="#333"/>
+          <circle id="pR" cx="190" cy="120" r="10" fill="#333"/>
+          <!-- Mouth -->
+          <path id="mouth" d="M110 200 Q150 210 190 200 Q150 210 110 200"
+                fill="#d64545" stroke="#7a1f1f" stroke-width="4"/>
+        </svg>
+      </div>
+      <div class="status">Status: <span id="status">ready</span></div>
+    </div>
+  </section>
+
+<script>
+(function(){
+  // ====== CONFIG: your laptop's Ollama ======
+  const OLLAMA_URL = "http://10.88.37.116:11434/api/generate"; // change if your IP changes
+  const OLLAMA_MODEL = "llama3:8b";
+
+  // --- UI handles
+  const micBtn = document.getElementById('micBtn');
+  const micLabel = document.getElementById('micLabel');
+  const supportPill = document.getElementById('supportPill');
+  const moreBtn = document.getElementById('moreBtn');
+  const repeatBtn = document.getElementById('repeatBtn');
+  const revealBtn = document.getElementById('revealBtn');
+
+  const faceCard = document.getElementById('faceCard');
+  const statusEl = document.getElementById('status');
+
+  // Face parts
+  const mouth = document.getElementById('mouth');
+  const pL = document.getElementById('pL'), pR = document.getElementById('pR');
+
+  // ====== State
+  let session = { hints:[], final_answer:{steps:[], concise:""}, clarifying_question:"", idx:-1 };
+  let mode = "idle"; // 'idle' | 'listening_question' | 'speaking' | 'await_followup'
+  let lastSpoken = "";
+
+  // ====== Mouth animation
+  let speaking=false, flapTimer=null;
+  const shapes={rest:"M110 200 Q150 210 190 200 Q150 210 110 200",
+                small:"M110 200 Q150 220 190 200 Q150 230 110 200",
+                mid:"M105 200 Q150 235 195 200 Q150 245 105 200",
+                wide:"M100 200 Q150 250 200 200 Q150 265 100 200"};
+  function setMouth(s){ mouth.setAttribute('d', shapes[s] || shapes.rest); }
+  function startFlap(){ let seq=['small','mid','wide','mid','small'], i=0; stopFlap(); flapTimer=setInterval(()=>{ if(speaking){ setMouth(seq[i%seq.length]); i++; }}, 110); }
+  function stopFlap(){ if(flapTimer){ clearInterval(flapTimer); flapTimer=null; } setMouth('rest'); }
+  function lookAround(){ const dx=(Math.random()*6-3), dy=(Math.random()*4-2);
+    pL.setAttribute('cx',110+dx); pL.setAttribute('cy',120+dy);
+    pR.setAttribute('cx',190+dx); pR.setAttribute('cy',120+dy); }
+  setInterval(()=>{ if(!speaking && Math.random()<0.5) lookAround(); }, 1000);
+  function setStatus(t){ statusEl.textContent = t; }
+
+  // ====== TTS
+  function speak(text, onend){
+    if(!text) return onend && onend();
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    const vs = window.speechSynthesis.getVoices();
+    u.voice = vs.find(v=>/en(-|_)/i.test(v.lang) && /female/i.test(v.name)) || vs.find(v=>/en(-|_)/i.test(v.lang)) || vs[0];
+    u.rate=1.0; u.pitch=1.0; u.volume=1.0;
+    u.onstart=()=>{ speaking=true; faceCard.classList.add('speaking'); setStatus('speaking…'); startFlap(); mode='speaking'; };
+    u.onend=()=>{ speaking=false; faceCard.classList.remove('speaking'); stopFlap(); setStatus('idle'); mode='await_followup'; onend && onend(); };
+    u.onerror=()=>{ speaking=false; faceCard.classList.remove('speaking'); stopFlap(); setStatus('error'); mode='idle'; onend && onend(); };
+    if (speechSynthesis.paused) speechSynthesis.resume();
+    lastSpoken = text;
+    speechSynthesis.speak(u);
+  }
+
+  function speakHint(i){
+    const h = session.hints[i]; if(!h) return;
+    // Voice like a teacher: nudge + teacher question (+ clarifier on first hint if present)
+    const extras = (i===0 && session.clarifying_question) ? ` ${session.clarifying_question}` : "";
+    const text = [h.nudge, h.teacher_question].filter(Boolean).join(". ") + extras;
+    speak(text);
+  }
+  function speakAnswer(){
+    const summary = session.final_answer.concise || "";
+    const steps = (session.final_answer.steps||[]).slice(0,4).map((s,j)=>`Step ${j+1}: ${s}.`).join(" ");
+    speak(summary || steps || "Here is the solution.");
+  }
+
+  // ====== STT (Web Speech API)
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
+  let rec=null, listening=false;
+
+  function updateSupport(){
+    const recOK = !!SR, ttsOK = 'speechSynthesis' in window;
+    if(recOK && ttsOK){ supportPill.textContent="Ready: Voice In + Out"; micBtn.disabled=false; }
+    else if(!recOK && ttsOK){ supportPill.textContent="No in-page voice input here (use buttons)"; micBtn.disabled=true; }
+    else if(recOK && !ttsOK){ supportPill.textContent="No speech output"; micBtn.disabled=false; }
+    else { supportPill.textContent="Voice features unavailable"; micBtn.disabled=true; }
+  }
+  updateSupport();
+
+  if (SR){
+    rec = new SR();
+    rec.lang = 'en-AU'; rec.interimResults = false; rec.continuous = false;
+
+    rec.onstart = ()=>{ listening=true; micLabel.textContent="Listening…"; setStatus('listening'); };
+    rec.onerror = ()=>{ listening=false; micLabel.textContent="Ask a question"; if(mode==='listening_question') setStatus('error'); };
+    rec.onend = ()=>{ listening=false; micLabel.textContent="Ask a question"; if(mode==='listening_question') setStatus('thinking…'); };
+
+    rec.onresult = async (e)=>{
+      const said = (e.results[0] && e.results[0][0] && e.results[0][0].transcript || "").trim().toLowerCase();
+      if (!said) return;
+
+      // If we were waiting for follow-up commands
+      if (mode==='await_followup'){
+        if (isRevealCmd(said)) { speakAnswer(); return; }
+        if (isMoreCmd(said) || isDunnoCmd(said)) { nextHint(); return; }
+        if (isRepeatCmd(said)) { speak(lastSpoken); return; }
+        // Otherwise treat as a brand new question
+        await handleQuestion(said);
+        return;
+      }
+
+      // Otherwise: this is a fresh question
+      await handleQuestion(said);
+    };
+  }
+
+  function startListening(){ if (!rec) return; try{ rec.start(); }catch{} }
+
+  // Simple NLU for follow-up commands
+  function isMoreCmd(t){ return /\b(more|next|another|continue|go on|one more)\b/.test(t); }
+  function isDunnoCmd(t){ return /\b(didn'?t understand|not clear|confused|help more|explain more)\b/.test(t); }
+  function isRevealCmd(t){ return /\b(reveal|answer|show solution|final)\b/.test(t); }
+  function isRepeatCmd(t){ return /\b(repeat|again|say that again)\b/.test(t); }
+
+  // ====== Ollama fetch (teacher JSON)
+  async function fetchTeacherJSON(question){
+    const system = `You are a supportive teacher who teaches with Socratic hints.
+Return STRICT JSON (no markdown, no extra text):
+{
+  "hints": [
+    { "nudge": "...", "teacher_question": "...", "micro_example": "...", "quick_check": "..." }
+  ],
+  "final_answer": { "steps": ["...","..."], "concise": "..." },
+  "clarifying_question": "OPTIONAL string",
+  "common_misconception": "OPTIONAL string"
+}
+Rules:
+- 2 to 4 hints, short and progressive.
+- Hints must NOT contain the final result.
+- Clear, student-friendly language.`;
+
+    const user = `Student question: ${question}
+Difficulty: medium
+Return ONLY the JSON.`;
+
+    const prompt = `${system}\n\n${user}`;
+
+    const res = await fetch(OLLAMA_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: OLLAMA_MODEL,
+        prompt,
+        stream: false,
+        format: "json",
+        options: { temperature: 0.7 }
+      })
+    });
+    const data = await res.json();
+    const text = (data.response || "").trim();
+
+    try { return JSON.parse(text); }
+    catch {
+      const m = text.match(/\{[\s\S]*\}$/);
+      if (m) { try { return JSON.parse(m[0]); } catch {} }
+      // fallback
+      return { hints:[{ nudge:"Break it into smaller steps.", teacher_question:"What is the first step?", micro_example:"", quick_check:"" }], final_answer:{ steps:[], concise:"" } };
+    }
+  }
+
+  async function handleQuestion(q){
+    // stop any TTS and STT
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+    if (rec && listening) { try{ rec.stop(); }catch{} }
+
+    mode='listening_question';
+    setStatus('thinking…');
+
+    // fetch all data at once
+    try{
+      const j = await fetchTeacherJSON(q);
+      const hints = Array.isArray(j.hints) ? j.hints.map(h=>({
+        nudge: h.nudge||"", teacher_question:h.teacher_question||"", micro_example:h.micro_example||"", quick_check:h.quick_check||""
+      })) : [];
+      session = {
+        hints,
+        final_answer: j.final_answer || { steps:[], concise:"" },
+        clarifying_question: j.clarifying_question || ""
+      };
+      session.idx = -1;
+      if (!session.hints.length){
+        speak("I couldn't prepare hints for that. Please try asking again.");
+        return;
+      }
+      nextHint(); // will speak and then wait for follow-up
+    }catch(e){
+      console.error(e);
+      speak("Sorry, I had trouble preparing hints.");
+      mode='idle';
+    }
+  }
+
+  function nextHint(){
+    if (!session.hints.length) return;
+    if (session.idx >= session.hints.length-1){
+      speak("Those were all the hints I prepared. Say 'reveal answer' if you want the solution.");
+      mode='await_followup';
+      return;
+    }
+    session.idx++;
+    speakHint(session.idx);
+  }
+
+  // ====== Buttons (manual control, optional)
+  moreBtn.addEventListener('click', ()=> nextHint());
+  repeatBtn.addEventListener('click', ()=> speak(lastSpoken||""));
+  revealBtn.addEventListener('click', ()=> speakAnswer());
+
+  // ====== Mic tap starts listening for a new question
+  micBtn.addEventListener('click', ()=>{
+    if (!SR){ speak("Speech input isn't supported in this browser. Use the buttons or try Chrome on Android."); return; }
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
+    mode='listening_question';
+    startListening();
+  });
+
+  // After each hint or answer finishes, automatically listen for follow-up
+  const _origSpeak = speak;
+  // (We already call speak; onend sets mode='await_followup'. Start listening a moment later.)
+  const observer = new MutationObserver(()=>{
+    if (mode==='await_followup' && SR && !listening){
+      setTimeout(()=>{ try{ rec.start(); }catch{} }, 250);
+    }
+  });
+  observer.observe(statusEl, { childList:true, subtree:false });
+
+  // init status
+  setStatus('ready');
+})();
+</script>
+</body>
+</html>
