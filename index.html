@@ -86,7 +86,8 @@
 <script>
 (function(){
   // ====== CONFIG: your laptop's Ollama ======
-  const OLLAMA_URL = "http://10.88.37.116:11434/api/generate"; // change if your IP changes
+  const OLLAMA_URL = "https://sonic-casual-bolt-fact.trycloudflare.com/api/generate"; // change if your IP changes
+  const STT_URL = " https://chapters-treated-liquid-fcc.trycloudflare.com/api/transcribe"; 
   const OLLAMA_MODEL = "llama3:8b";
 
   // --- UI handles
@@ -165,6 +166,87 @@
     else { supportPill.textContent="Voice features unavailable"; micBtn.disabled=true; }
   }
   updateSupport();
+
+  if (!SR) {
+  const micBtn = document.getElementById('micBtn');
+  const micLabel = document.getElementById('micLabel');
+
+  let stream, rec, chunks = [];
+
+  function pickMime(){
+    if (window.MediaRecorder && MediaRecorder.isTypeSupported) {
+      if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) return 'audio/webm;codecs=opus';
+      if (MediaRecorder.isTypeSupported('audio/mp4')) return 'audio/mp4';
+      if (MediaRecorder.isTypeSupported('audio/aac')) return 'audio/aac';
+    }
+    return ''; // let browser decide
+  }
+
+  async function startRec(){
+    try{
+      stream = await navigator.mediaDevices.getUserMedia({ audio:true });
+      const mime = pickMime();
+      rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      chunks = [];
+      rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+      rec.onstop = async () => {
+        const ext = (rec.mimeType.includes('webm') ? '.webm' : rec.mimeType.includes('mp4') ? '.m4a' : '.aac');
+        const blob = new Blob(chunks, { type: rec.mimeType || 'application/octet-stream' });
+        const form = new FormData();
+        form.append('audio', blob, 'q' + ext);
+
+        try{
+          const r = await fetch(STT_URL, { method:'POST', body: form });
+          const j = await r.json();
+          const said = (j.text || '').trim();
+
+          // Reuse your existing logic:
+          // If we're waiting for a follow-up and user said "more hint"/"reveal", handle that.
+          if (said) {
+            const t = said.toLowerCase();
+            if (typeof isRevealCmd === 'function' && mode === 'await_followup' && /\b(reveal|answer|solution|final)\b/.test(t)) {
+              speakAnswer();
+            } else if (typeof isMoreCmd === 'function' && mode === 'await_followup' && (/\b(more|next|another|continue|go on|one more)\b/.test(t) || /\b(didn'?t understand|not clear|confused|explain more)\b/.test(t))) {
+              nextHint();
+            } else if (typeof isRepeatCmd === 'function' && mode === 'await_followup' && /\b(repeat|again|say that again)\b/.test(t)) {
+              speak(lastSpoken);
+            } else {
+              // treat as a brand new question
+              handleQuestion(said);
+            }
+          } else {
+            speak("Sorry, I couldn't hear that. Please try again.");
+          }
+        } catch(e){
+          console.error(e);
+          speak("Transcription failed.");
+        } finally {
+          if (stream) stream.getTracks().forEach(t => t.stop());
+        }
+      };
+      rec.start();
+      micLabel.textContent = "Recording… tap to stop";
+    }catch(err){
+      console.error(err);
+      speak("I couldn't access the microphone.");
+    }
+  }
+
+  function stopRec(){
+    try{ rec && rec.state !== 'inactive' && rec.stop(); }catch{}
+  }
+
+  // Toggle record on tap
+  micBtn.disabled = false;
+  micBtn.addEventListener('click', ()=>{
+    if (!rec || rec.state === 'inactive') startRec();
+    else stopRec();
+  });
+
+  // Update the banner
+  const supportPill = document.getElementById('supportPill');
+  if (supportPill) supportPill.textContent = "iOS mode: tap mic to record, tap again to stop";
+}
 
   if (SR){
     rec = new SR();
